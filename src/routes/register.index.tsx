@@ -4,61 +4,51 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
-import { Loader2, ArrowLeft } from "lucide-react";
+import { Loader2, ArrowLeft, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 
-import { supabase } from "@/integrations/supabase/client";
+import { registrationsApi } from "@/lib/api-client";
+import { useEvents } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SiteFooter, SiteHeader } from "@/components/site-chrome";
-import { useEventSettings } from "@/components/logo";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-export const registerSchema = z.object({
-  full_name: z.string().trim().min(2, "Please enter your full name").max(120),
+const registerSchema = z.object({
+  fullName: z.string().trim().min(2, "Please enter your full name").max(120),
   organisation: z.string().trim().min(2, "Please enter your organisation").max(160),
   email: z
     .string()
     .trim()
     .min(1, "Email address is required")
     .max(255)
-    .refine((value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), {
-      message: "Enter a valid email address",
-    }),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^[0-9]{10}$/, "Phone must be exactly 10 digits"),
+    .refine((v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), { message: "Enter a valid email address" }),
+  phone: z.string().trim().regex(/^[0-9]{10}$/, "Phone must be exactly 10 digits").optional().or(z.literal("")),
   position: z.string().trim().max(120).optional().or(z.literal("")),
 });
-export type RegisterInput = z.infer<typeof registerSchema>;
+type RegisterInput = z.infer<typeof registerSchema>;
 
-const STORED_REGISTRATION_KEY = "visitorlog.registration";
+const STORED_KEY = "visitorlog.registration";
 
-function getStoredRegistrationNumber(): string | null {
+function getStoredReg(): string | null {
   try {
-    const raw = localStorage.getItem(STORED_REGISTRATION_KEY);
+    const raw = localStorage.getItem(STORED_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { registrationNumber?: string };
     return typeof parsed.registrationNumber === "string" ? parsed.registrationNumber : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-function storeRegistrationNumber(registrationNumber: string) {
-  try {
-    localStorage.setItem(STORED_REGISTRATION_KEY, JSON.stringify({ registrationNumber }));
-  } catch {
-    // Ignore storage failures (e.g. private browsing) — dedup is a soft UX guard, not a hard rule.
-  }
+function storeReg(registrationNumber: string) {
+  try { localStorage.setItem(STORED_KEY, JSON.stringify({ registrationNumber })); } catch { /* ignore */ }
 }
 
 export const Route = createFileRoute("/register/")({
   head: () => ({
     meta: [
       { title: "Register — Summit Registration" },
-      { name: "description", content: "Register for the Financial Architecture Summit." },
+      { name: "description", content: "Register for the event." },
     ],
   }),
   component: RegisterPage,
@@ -66,12 +56,14 @@ export const Route = createFileRoute("/register/")({
 
 function RegisterPage() {
   const navigate = useNavigate();
-  const { data: settings } = useEventSettings();
-  const closed = settings?.registration_open === false;
+  const { data: events = [], isLoading: eventsLoading } = useEvents();
+  const [selectedEventId, setSelectedEventId] = useState("");
   const [checkedExisting, setCheckedExisting] = useState(false);
 
+  const activeEvent = events.find((e) => e.eventId === selectedEventId) ?? events.find((e) => e.registrationOpen) ?? events[0];
+
   useEffect(() => {
-    const existing = getStoredRegistrationNumber();
+    const existing = getStoredReg();
     if (existing) {
       navigate({ to: "/register/success/$reg", params: { reg: existing }, replace: true });
       return;
@@ -81,40 +73,35 @@ function RegisterPage() {
 
   const form = useForm<RegisterInput>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { full_name: "", organisation: "", email: "", phone: "", position: "" },
+    defaultValues: { fullName: "", organisation: "", email: "", phone: "", position: "" },
   });
 
   const onSubmit = async (values: RegisterInput) => {
-    const { data, error } = await supabase.rpc("register_participant" as never, {
-      _full_name: values.full_name,
-      _organisation: values.organisation,
-      _email: values.email.toLowerCase(),
-      _phone: values.phone || "",
-      _position: values.position || "",
-    } as never);
-
-    if (error) {
-      if ((error as { code?: string }).code === "23505" || /duplicate/i.test(error.message)) {
+    if (!activeEvent) { toast.error("No event available for registration"); return; }
+    try {
+      const data = await registrationsApi.register(activeEvent.eventId, {
+        fullName: values.fullName,
+        organisation: values.organisation,
+        email: values.email.toLowerCase(),
+        phone: values.phone || undefined,
+        position: values.position || undefined,
+      });
+      storeReg(data.registrationNumber);
+      navigate({ to: "/register/success/$reg", params: { reg: data.registrationNumber } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Registration failed";
+      if (msg.toLowerCase().includes("email")) {
         form.setError("email", { message: "This email is already registered" });
         toast.error("This email is already registered");
         return;
       }
-      if (/phone/i.test(error.message)) {
-        form.setError("phone", { message: "Phone must be exactly 10 digits" });
-      }
-      toast.error(error.message || "Registration failed");
-      return;
+      toast.error(msg);
     }
-    const row = (Array.isArray(data) ? data[0] : data) as { registration_number?: string } | null | undefined;
-    if (!row?.registration_number) {
-      toast.error("Registration failed");
-      return;
-    }
-    storeRegistrationNumber(row.registration_number);
-    navigate({ to: "/register/success/$reg", params: { reg: row.registration_number } });
   };
 
-  if (!checkedExisting) return null;
+  if (!checkedExisting || eventsLoading) return null;
+
+  const closed = !activeEvent || !activeEvent.registrationOpen;
 
   return (
     <div className="min-h-screen bg-background">
@@ -135,14 +122,28 @@ function RegisterPage() {
               Fill in your details below. You'll receive a unique registration number to bring on the day.
             </p>
 
+            {events.length > 1 && (
+              <div className="mt-6 flex items-center gap-3">
+                <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                <Select value={selectedEventId} onValueChange={setSelectedEventId}>
+                  <SelectTrigger className="w-[260px]"><SelectValue placeholder="Select event" /></SelectTrigger>
+                  <SelectContent>
+                    {events.filter((e) => e.registrationOpen).map((e) => (
+                      <SelectItem key={e.eventId} value={e.eventId}>{e.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {closed ? (
               <div className="mt-8 rounded-lg border border-accent/50 bg-accent/15 p-4 text-sm">
                 Registration is currently closed. Please check back later or contact the organisers.
               </div>
             ) : (
               <form onSubmit={form.handleSubmit(onSubmit)} className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2">
-                <Field label="Full name" required error={form.formState.errors.full_name?.message}>
-                  <Input autoComplete="name" placeholder="e.g. Ama Owusu" {...form.register("full_name")} />
+                <Field label="Full name" required error={form.formState.errors.fullName?.message}>
+                  <Input autoComplete="name" placeholder="e.g. Ama Owusu" {...form.register("fullName")} />
                 </Field>
                 <Field label="Organisation" required error={form.formState.errors.organisation?.message}>
                   <Input autoComplete="organization" placeholder="Company / Institution" {...form.register("organisation")} />
@@ -151,14 +152,7 @@ function RegisterPage() {
                   <Input type="email" autoComplete="email" placeholder="you@company.com" {...form.register("email")} />
                 </Field>
                 <Field label="Phone number" error={form.formState.errors.phone?.message}>
-                  <Input
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel"
-                    maxLength={10}
-                    placeholder="10-digit phone number (optional)"
-                    {...form.register("phone")}
-                  />
+                  <Input type="tel" inputMode="numeric" autoComplete="tel" maxLength={10} placeholder="10-digit phone (optional)" {...form.register("phone")} />
                 </Field>
                 <div className="md:col-span-2">
                   <Field label="Position / Job title" error={form.formState.errors.position?.message}>
@@ -167,14 +161,9 @@ function RegisterPage() {
                 </div>
                 <div className="md:col-span-2 mt-2 flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">
-                    By registering you agree to receive summit-related communications.
+                    By registering you agree to receive event-related communications.
                   </p>
-                  <Button
-                    type="submit"
-                    size="lg"
-                    disabled={form.formState.isSubmitting}
-                    className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
-                  >
+                  <Button type="submit" size="lg" disabled={form.formState.isSubmitting} className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold">
                     {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Complete registration
                   </Button>
@@ -189,17 +178,7 @@ function RegisterPage() {
   );
 }
 
-function Field({
-  label,
-  required,
-  error,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  error?: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string; children: React.ReactNode }) {
   return (
     <div>
       <Label className="mb-1.5 block text-sm font-medium">

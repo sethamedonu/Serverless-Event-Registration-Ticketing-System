@@ -3,21 +3,22 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
-import { CheckCircle2, Loader2, UserPlus } from "lucide-react";
+import { CheckCircle2, Loader2, UserPlus, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
+import { useEffect, useState } from "react";
 
-import { supabase } from "@/integrations/supabase/client";
+import { registrationsApi } from "@/lib/api-client";
+import { useEvents } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { logAudit } from "@/lib/audit";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCurrentStaff } from "@/lib/hooks/use-auth";
-import { useEffect, useState } from "react";
 
 const AUTO_CONTINUE_MS = 5000;
 
 const schema = z.object({
-  full_name: z.string().trim().min(2).max(120),
+  fullName: z.string().trim().min(2).max(120),
   organisation: z.string().trim().min(2).max(160),
   email: z.string().trim().email().max(255),
   phone: z.string().trim().max(30).optional().or(z.literal("")),
@@ -32,10 +33,14 @@ export const Route = createFileRoute("/_authenticated/walk-in")({
 function WalkInPage() {
   const navigate = useNavigate();
   const staff = useCurrentStaff();
+  const { data: events = [] } = useEvents();
+  const [selectedEventId, setSelectedEventId] = useState("");
   const [successInfo, setSuccessInfo] = useState<{ reg: string; name: string } | null>(null);
 
+  const activeEventId = selectedEventId || events[0]?.eventId || "";
+
   useEffect(() => {
-    if (!staff.loading && !(staff.isAdmin || staff.isRegOfficer || staff.isCheckinOfficer)) {
+    if (!staff.loading && !staff.isAdmin && !staff.isRegOfficer && !staff.isCheckinOfficer) {
       toast.error("You don't have access to walk-in registration");
       navigate({ to: "/dashboard" });
     }
@@ -49,49 +54,38 @@ function WalkInPage() {
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: { full_name: "", organisation: "", email: "", phone: "", position: "" },
+    defaultValues: { fullName: "", organisation: "", email: "", phone: "", position: "" },
   });
 
   const onSubmit = async (v: z.infer<typeof schema>) => {
-    const { data: user } = await supabase.auth.getUser();
-    const { data, error } = await supabase
-      .from("participants")
-      .insert({
-        full_name: v.full_name,
+    if (!activeEventId) {
+      toast.error("Please select an event first");
+      return;
+    }
+    try {
+      const data = await registrationsApi.walkIn(activeEventId, {
+        fullName: v.fullName,
         organisation: v.organisation,
         email: v.email.toLowerCase(),
-        phone: v.phone || null,
-        position: v.position || null,
-        registration_type: "walk_in",
-        created_by: user.user?.id,
-      })
-      .select("id, registration_number")
-      .maybeSingle();
+        phone: v.phone || undefined,
+        position: v.position || undefined,
+      });
 
-    if (error) {
-      if (error.code === "23505") {
-        form.setError("email", { message: "This email is already registered" });
-        toast.error("This email is already registered");
+      if (staff.isCheckinOfficer && !staff.isAdmin && !staff.isRegOfficer) {
+        form.reset();
+        setSuccessInfo({ reg: data.registrationNumber, name: v.fullName });
         return;
       }
-      toast.error(error.message);
-      return;
-    }
-    if (!data) return;
-    await logAudit("participant.walk_in_registered", {
-      entity: "participant",
-      entity_id: data.id,
-      meta: { reg: data.registration_number, name: v.full_name },
-    });
 
-    if (staff.isCheckinOfficer && !staff.isAdmin && !staff.isRegOfficer) {
-      form.reset();
-      setSuccessInfo({ reg: data.registration_number, name: v.full_name });
-      return;
+      toast.success(`Registered ${data.registrationNumber} — opening badge…`);
+      navigate({ to: "/badge/$id", params: { id: data.registrationId } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Registration failed";
+      if (msg.toLowerCase().includes("email")) {
+        form.setError("email", { message: "This email is already registered for this event" });
+      }
+      toast.error(msg);
     }
-
-    toast.success(`Registered ${data.registration_number} — opening badge…`);
-    navigate({ to: "/badge/$id", params: { id: data.id } });
   };
 
   if (successInfo) {
@@ -110,18 +104,13 @@ function WalkInPage() {
               <div className="text-xs font-semibold uppercase tracking-[0.25em] text-accent">Registration complete</div>
             </div>
             <h1 className="mt-4 text-3xl font-bold md:text-4xl">{successInfo.name} is registered</h1>
-            <p className="mt-2 max-w-xl text-white/85">Share the registration number below with the participant.</p>
           </div>
           <div className="p-10">
             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Registration number</div>
             <div className="mt-1 text-4xl font-black tracking-tight text-primary md:text-5xl">{successInfo.reg}</div>
           </div>
           <div className="flex flex-wrap items-center gap-3 border-t border-border bg-secondary/30 p-6">
-            <Button
-              onClick={() => setSuccessInfo(null)}
-              size="lg"
-              className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
-            >
+            <Button onClick={() => setSuccessInfo(null)} size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold">
               <UserPlus className="mr-2 h-4 w-4" /> Register another
             </Button>
             <p className="text-xs text-muted-foreground">Continuing automatically in a few seconds…</p>
@@ -139,6 +128,20 @@ function WalkInPage() {
         <p className="mt-1 text-muted-foreground">Fast entry — press Tab between fields and Enter to submit.</p>
       </div>
 
+      {events.length > 1 && (
+        <div className="flex items-center gap-3">
+          <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          <Select value={activeEventId} onValueChange={setSelectedEventId}>
+            <SelectTrigger className="w-[240px]"><SelectValue placeholder="Select event" /></SelectTrigger>
+            <SelectContent>
+              {events.map((e) => (
+                <SelectItem key={e.eventId} value={e.eventId}>{e.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       <motion.form
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -148,14 +151,9 @@ function WalkInPage() {
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div className="md:col-span-2">
             <Label className="mb-1.5 block text-base font-semibold">Full name *</Label>
-            <Input
-              autoFocus
-              className="h-12 text-lg"
-              placeholder="e.g. Kwame Boateng"
-              {...form.register("full_name")}
-            />
-            {form.formState.errors.full_name && (
-              <p className="mt-1 text-xs text-destructive">{form.formState.errors.full_name.message}</p>
+            <Input autoFocus className="h-12 text-lg" placeholder="e.g. Kwame Boateng" {...form.register("fullName")} />
+            {form.formState.errors.fullName && (
+              <p className="mt-1 text-xs text-destructive">{form.formState.errors.fullName.message}</p>
             )}
           </div>
           <div>
@@ -183,17 +181,8 @@ function WalkInPage() {
         </div>
         <div className="mt-8 flex flex-wrap justify-end gap-3">
           <Button type="button" variant="outline" onClick={() => form.reset()}>Reset</Button>
-          <Button
-            type="submit"
-            size="lg"
-            disabled={form.formState.isSubmitting}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
-          >
-            {form.formState.isSubmitting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <UserPlus className="mr-2 h-4 w-4" />
-            )}
+          <Button type="submit" size="lg" disabled={form.formState.isSubmitting} className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold">
+            {form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
             Register & print badge
           </Button>
         </div>

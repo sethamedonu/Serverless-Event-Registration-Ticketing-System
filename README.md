@@ -1,89 +1,142 @@
-# Summit Registration & Check-in System
+# Event Registration & Ticketing System
 
-Production-ready registration, check-in, and badge-printing system for the
-**National Banking College Summit**. Built on TanStack Start, React 19,
-Tailwind v4, shadcn/ui, and Lovable Cloud (Supabase).
+A serverless event registration and check-in system built on **AWS** with a **React/TanStack Start** frontend hosted on **AWS Amplify**.
 
-## Features
+## Architecture
 
-- **Public landing** with hero, about, event details, and CTA
-- **Public registration** with unique auto-generated numbers (`SUMMIT-0001`)
-  and a success page
-- **Coordinator console** (protected) with:
-  - **Dashboard** — live stats (total, checked-in, pending, walk-ins, today) + recent activity
-  - **Participants** — searchable, sortable, filterable table with print / edit / delete
-  - **Walk-in registration** — fast reception form → badge in one click
-  - **Check-in** — distraction-free search / open / check-in / print
-  - **Badge preview + printing** — 100 × 60 mm landscape (XPrinter XP-DT427B), print CSS, react-to-print
-  - **Reports** — Attendance / Registration / Walk-in exports as CSV, Excel, PDF
-  - **Staff management** — admin creates staff, assigns roles, disables accounts, sends password resets
-  - **Event settings** — event name, date, venue, logo URL, brand colours, registration open flag, badge options
-  - **Audit log** — every important action captured
-- **Role-Based Access Control** — `admin`, `registration_officer`, `checkin_officer`
-- Row-Level Security on every table
-- Responsive, animated, accessible, dark-mode ready
+```
+GitHub (TerryBinful/event-with-me)
+  │
+  ├── GitHub Actions → SAM Deploy (backend/)
+  └── AWS Amplify Hosting (frontend, auto-deploy on push)
 
-## First administrator
+AWS Stack (backend/template.yaml)
+  ├── Cognito User Pool (auth + staff roles)
+  ├── API Gateway REST API + Cognito Authorizer
+  ├── Lambda Functions (Node.js 20)
+  │     POST   /events
+  │     GET    /events
+  │     PUT    /events/{eventId}
+  │     POST   /events/{eventId}/register      (public)
+  │     GET    /events/{eventId}/registrations
+  │     POST   /events/{eventId}/walk-in
+  │     GET    /registrations/{email}
+  │     PUT    /registrations/{id}
+  │     DELETE /registrations/{id}
+  │     POST   /registrations/{id}/checkin
+  │     POST   /registrations/{id}/print
+  │     GET    /audit
+  ├── DynamoDB (Events, Registrations, AuditLogs)
+  ├── SNS Topic (confirmation emails)
+  ├── CloudWatch Alarms (error rate > 5%)
+  └── AWS Budgets ($1/month free-tier alert)
+```
 
-The **first user to sign up** on `/auth` automatically becomes the
-administrator (via a database trigger on `auth.users`). Additional staff
-are created from **Staff → Add staff** by that administrator, with a
-temporary password and role.
+## First-time setup
 
-## Environment variables
+### 1. Deploy the backend
 
-Managed automatically by Lovable Cloud (already populated in `.env`):
+```bash
+cd backend
+npm install
+sam build
+sam deploy --guided
+# Stack name: event-with-me-prod
+# Region: <your-region>
+# Confirm changes: Y
+```
 
-- `VITE_SUPABASE_URL` / `SUPABASE_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` — server-only, used by staff-management server functions
+Note the outputs: `ApiUrl`, `UserPoolId`, `UserPoolClientId`.
+
+### 2. Create the first admin user
+
+```bash
+# Replace values with your own
+aws cognito-idp admin-create-user \
+  --user-pool-id <UserPoolId> \
+  --username admin@yourorg.com \
+  --temporary-password Admin@1234 \
+  --user-attributes Name=name,Value="Admin User"
+
+aws cognito-idp admin-add-user-to-group \
+  --user-pool-id <UserPoolId> \
+  --username admin@yourorg.com \
+  --group-name Admin
+```
+
+### 3. Configure the frontend
+
+Create `.env` from `.env.example` and fill in the SAM outputs:
+
+```
+VITE_API_URL=https://...execute-api...amazonaws.com/prod
+VITE_COGNITO_USER_POOL_ID=...
+VITE_COGNITO_CLIENT_ID=...
+VITE_AWS_REGION=...
+```
+
+### 4. Connect Amplify Hosting
+
+1. Go to **AWS Amplify Console → New app → Host web app**
+2. Connect to GitHub repo `TerryBinful/event-with-me`, branch `main`
+3. Amplify auto-detects `amplify.yml`
+4. Add the 4 environment variables above in **App settings → Environment variables**
+5. Deploy
+
+### 5. Set up GitHub Actions secrets
+
+In GitHub repo **Settings → Secrets → Actions**, add:
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+
+The CI/CD pipeline (`.github/workflows/deploy.yml`) will:
+- Run Lambda unit tests on every push/PR to `backend/`
+- Build and deploy via SAM on push to `main`
+
+## Cognito groups (roles)
+
+| Group | Access |
+|---|---|
+| `Admin` | Full access — events, staff, reports, settings, audit |
+| `RegistrationOfficer` | Walk-in registration, participants |
+| `CheckinOfficer` | Check-in, walk-in (limited) |
+
+## Running locally
+
+```bash
+npm install        # or: bun install
+cp .env.example .env   # fill in your values
+npm run dev        # starts at http://localhost:3000
+```
 
 ## Badge printing (XPrinter XP-DT427B)
 
-The badge is exactly **100 mm × 60 mm landscape**. In Chrome:
-
-1. Open a badge preview and click **Print badge**.
-2. Set paper size to **100mm × 60mm landscape** in the print dialog.
-3. Set margins to **None**.
-4. **Uncheck** "Headers and footers".
-5. Select your XPrinter XP-DT427B as the destination.
-
-The dedicated print CSS (`src/styles.css`) enforces `@page { size: 100mm 60mm landscape; margin: 0 }`
-and hides all non-badge content.
-
-## Deployment
-
-The app targets Cloudflare Workers via TanStack Start. To publish, use the
-Lovable **Publish** button. If deploying to Vercel:
-
-```
-bun install
-bun run build
-```
-
-Set the same env vars above in your host. The service-role key must remain
-server-only — never expose it to the client.
-
-## Security notes
-
-- Every protected route sits under `_authenticated/` and is gated client-side
-  by `supabase.auth.getUser()`; every write is additionally guarded by RLS.
-- Public registration only works when `event_settings.registration_open` is true,
-  and only `online` rows with no staff fields can be inserted by anon.
-- Roles are stored in `public.user_roles`, checked via `has_role()` SECURITY DEFINER — never on `profiles`.
-- Client & server both validate input with Zod.
+Badge is **100mm × 60mm landscape**. In Chrome print dialog:
+1. Paper size: 100mm × 60mm landscape
+2. Margins: None
+3. Uncheck "Headers and footers"
 
 ## Project structure
 
 ```
+backend/                  AWS SAM backend
+  template.yaml           All AWS infrastructure
+  events/                 Lambda: createEvent, listEvents, updateEvent
+  registrations/          Lambda: register, list, checkIn, walkIn, delete, print, audit
+  shared/                 db.mjs, response.mjs, ids.mjs, auth.mjs
+  __tests__/              Jest unit tests
+
 src/
-  routes/             file-based routes (public + _authenticated/)
-  components/         reusable UI: app-shell, site-chrome, participant-badge, logo, ui/*
   lib/
-    hooks/use-auth.ts session + role hooks
-    audit.ts          audit-log helper
-    staff.functions.ts createServerFn admin actions
-  integrations/supabase/  auto-generated cloud clients
-  assets/logo.png     event crest (uploaded)
-  styles.css          design tokens + print CSS
+    api-client.ts         All API calls (replaces Supabase)
+    auth/cognito-client.ts Cognito sign-in/out/session
+    hooks/use-auth.ts     Cognito session + role hooks
+  routes/                 TanStack file-based routes
+  components/             UI components
+
+.github/workflows/
+  deploy.yml              CI/CD: test → SAM build → SAM deploy
+
+amplify.yml               Amplify Hosting build config
 ```

@@ -1,6 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import { motion } from "framer-motion";
 import { Loader2, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
@@ -8,21 +7,19 @@ import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
-import { supabase } from "@/integrations/supabase/client";
+import { signIn, getSession, forgotPassword } from "@/lib/auth/cognito-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo, useEventSettings } from "@/components/logo";
-import { logAudit } from "@/lib/audit";
-import { signUpStaff as signUpStaffFn } from "@/lib/staff.functions";
 
 const signInSchema = z.object({
   email: z.string().trim().email("Enter a valid email"),
   password: z.string().min(6, "Minimum 6 characters"),
 });
-const signUpSchema = signInSchema.extend({
-  display_name: z.string().trim().min(2, "Enter your name").max(120),
-  token: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit signup code"),
+
+const forgotSchema = z.object({
+  email: z.string().trim().email("Enter a valid email"),
 });
 
 export const Route = createFileRoute("/auth")({
@@ -33,51 +30,36 @@ export const Route = createFileRoute("/auth")({
 function AuthPage() {
   const navigate = useNavigate();
   const { data: settings } = useEventSettings();
-  const [mode, setMode] = useState<"sign_in" | "sign_up">("sign_in");
+  const [mode, setMode] = useState<"sign_in" | "forgot">("sign_in");
 
-  // If already signed in, jump to dashboard.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/dashboard", replace: true });
+    getSession().then((s) => {
+      if (s) navigate({ to: "/dashboard", replace: true });
     });
   }, [navigate]);
 
-  type FormValues = z.infer<typeof signUpSchema>;
-  const form = useForm<FormValues>({
-    resolver: zodResolver(mode === "sign_in" ? signInSchema : signUpSchema) as never,
-    defaultValues: { email: "", password: "", display_name: "", token: "" },
+  const form = useForm<z.infer<typeof signInSchema>>({
+    resolver: zodResolver(mode === "sign_in" ? signInSchema : forgotSchema) as never,
+    defaultValues: { email: "", password: "" },
   });
-  const signUpStaff = useServerFn(signUpStaffFn);
 
-  const onSubmit = async (values: FormValues) => {
+  const onSubmit = async (values: z.infer<typeof signInSchema>) => {
     if (mode === "sign_in") {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: values.email,
-        password: values.password,
-      });
-      if (error) {
-        toast.error(error.message);
-        return;
+      try {
+        await signIn(values.email, values.password);
+        toast.success("Welcome back");
+        navigate({ to: "/dashboard", replace: true });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Sign in failed");
       }
-      await logAudit("user.login");
-      toast.success("Welcome back");
-      navigate({ to: "/dashboard", replace: true });
     } else {
       try {
-        await signUpStaff({
-          data: {
-            email: values.email,
-            password: values.password,
-            display_name: values.display_name,
-            token: values.token,
-          },
-        });
+        await forgotPassword(values.email);
+        toast.success("Password reset code sent to your email");
+        navigate({ to: "/reset-password", replace: true });
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to create account");
-        return;
+        toast.error(e instanceof Error ? e.message : "Failed to send reset code");
       }
-      toast.success("Account created. You can sign in now.");
-      setMode("sign_in");
     }
   };
 
@@ -90,13 +72,13 @@ function AuthPage() {
         <div>
           <Logo className="h-20 w-20 rounded-full bg-white/95 p-1" />
           <h1 className="mt-6 text-4xl font-black leading-tight">
-            {settings?.event_name ?? "Financial Architecture Summit"}
+            {settings?.name ?? "Event Registration System"}
           </h1>
           <p className="mt-4 max-w-md text-white/85">
             Coordinator console — register walk-ins, check delegates in, and print badges on arrival.
           </p>
         </div>
-        <div className="text-xs text-white/70">Integrity and Excellence</div>
+        <div className="text-xs text-white/70">Powered by AWS</div>
       </div>
 
       <div className="flex items-center justify-center p-6 md:p-12">
@@ -107,30 +89,21 @@ function AuthPage() {
         >
           <div className="mb-2 flex items-center gap-3 lg:hidden">
             <Logo className="h-10 w-10 rounded-full" />
-            <div className="text-sm font-semibold">{settings?.event_name ?? "National Banking College"}</div>
+            <div className="text-sm font-semibold">{settings?.name ?? "Event System"}</div>
           </div>
           <div className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
-            {mode === "sign_in" ? "Staff sign in" : "Create staff account"}
+            {mode === "sign_in" ? "Staff sign in" : "Reset password"}
           </div>
           <h2 className="mt-2 text-2xl font-bold">
-            {mode === "sign_in" ? "Welcome back" : "Set up your account"}
+            {mode === "sign_in" ? "Welcome back" : "Forgot your password?"}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "sign_in"
               ? "Sign in to access the coordinator console."
-              : "The first account created becomes the administrator automatically."}
+              : "Enter your email and we'll send a reset code."}
           </p>
 
           <form onSubmit={form.handleSubmit(onSubmit)} className="mt-6 space-y-4">
-            {mode === "sign_up" && (
-              <div>
-                <Label className="mb-1.5 block text-sm">Display name</Label>
-                <Input placeholder="Your name" {...form.register("display_name")} />
-                {form.formState.errors.display_name && (
-                  <p className="mt-1 text-xs text-destructive">{form.formState.errors.display_name.message}</p>
-                )}
-              </div>
-            )}
             <div>
               <Label className="mb-1.5 block text-sm">Email</Label>
               <Input type="email" autoComplete="email" placeholder="you@work.com" {...form.register("email")} />
@@ -138,29 +111,12 @@ function AuthPage() {
                 <p className="mt-1 text-xs text-destructive">{form.formState.errors.email.message}</p>
               )}
             </div>
-            <div>
-              <Label className="mb-1.5 block text-sm">Password</Label>
-              <Input
-                type="password"
-                autoComplete={mode === "sign_in" ? "current-password" : "new-password"}
-                placeholder="••••••••"
-                {...form.register("password")}
-              />
-              {form.formState.errors.password && (
-                <p className="mt-1 text-xs text-destructive">{form.formState.errors.password.message}</p>
-              )}
-            </div>
-            {mode === "sign_up" && (
+            {mode === "sign_in" && (
               <div>
-                <Label className="mb-1.5 block text-sm">Signup code</Label>
-                <Input
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="6-digit code from your administrator"
-                  {...form.register("token")}
-                />
-                {form.formState.errors.token && (
-                  <p className="mt-1 text-xs text-destructive">{form.formState.errors.token.message}</p>
+                <Label className="mb-1.5 block text-sm">Password</Label>
+                <Input type="password" autoComplete="current-password" placeholder="••••••••" {...form.register("password")} />
+                {form.formState.errors.password && (
+                  <p className="mt-1 text-xs text-destructive">{form.formState.errors.password.message}</p>
                 )}
               </div>
             )}
@@ -171,16 +127,16 @@ function AuthPage() {
               disabled={form.formState.isSubmitting}
             >
               {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {mode === "sign_in" ? "Sign in" : "Create account"}
+              {mode === "sign_in" ? "Sign in" : "Send reset code"}
             </Button>
           </form>
 
           <button
             type="button"
-            onClick={() => setMode(mode === "sign_in" ? "sign_up" : "sign_in")}
+            onClick={() => setMode(mode === "sign_in" ? "forgot" : "sign_in")}
             className="mt-6 w-full text-center text-sm text-muted-foreground hover:text-foreground"
           >
-            {mode === "sign_in" ? "Need an account? Create one" : "Already have an account? Sign in"}
+            {mode === "sign_in" ? "Forgot your password?" : "Back to sign in"}
           </button>
         </motion.div>
       </div>

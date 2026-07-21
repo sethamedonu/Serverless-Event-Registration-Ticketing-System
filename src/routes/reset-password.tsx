@@ -1,12 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Loader2, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
-import { supabase } from "@/integrations/supabase/client";
+import { confirmPassword } from "@/lib/auth/cognito-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,8 @@ import { Logo } from "@/components/logo";
 
 const schema = z
   .object({
+    email: z.string().trim().email("Enter a valid email"),
+    code: z.string().trim().min(6, "Enter the 6-digit code from your email"),
     password: z.string().min(8, "At least 8 characters"),
     confirm: z.string(),
   })
@@ -26,37 +28,20 @@ export const Route = createFileRoute("/reset-password")({
 
 function ResetPasswordPage() {
   const navigate = useNavigate();
-  const [ready, setReady] = useState(false);
-
-  // Supabase places a recovery access token in the URL hash and the client
-  // exchanges it into a session automatically. Wait for that session before
-  // allowing the password update, otherwise `updateUser` fails.
-  useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "PASSWORD_RECOVERY" || (event === "SIGNED_IN" && session)) {
-        setReady(true);
-      }
-    });
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) setReady(true);
-    });
-    return () => sub.subscription.unsubscribe();
-  }, []);
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: { password: "", confirm: "" },
+    defaultValues: { email: "", code: "", password: "", confirm: "" },
   });
 
   const onSubmit = async (v: z.infer<typeof schema>) => {
-    const { error } = await supabase.auth.updateUser({ password: v.password });
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      await confirmPassword(v.email, v.code, v.password);
+      toast.success("Password updated. Please sign in.");
+      navigate({ to: "/auth", replace: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to reset password");
     }
-    toast.success("Password updated. Please sign in.");
-    await supabase.auth.signOut();
-    navigate({ to: "/auth", replace: true });
   };
 
   return (
@@ -70,23 +55,33 @@ function ResetPasswordPage() {
           <div className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">Reset password</div>
         </div>
         <h1 className="mt-3 text-2xl font-bold">Choose a new password</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {ready
-            ? "Enter and confirm your new password below."
-            : "Verifying your reset link…"}
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">Enter the code sent to your email and your new password.</p>
 
         <form onSubmit={form.handleSubmit(onSubmit)} className="mt-6 space-y-4">
           <div>
+            <Label className="mb-1.5 block text-sm">Email</Label>
+            <Input type="email" autoComplete="email" {...form.register("email")} />
+            {form.formState.errors.email && (
+              <p className="mt-1 text-xs text-destructive">{form.formState.errors.email.message}</p>
+            )}
+          </div>
+          <div>
+            <Label className="mb-1.5 block text-sm">Reset code</Label>
+            <Input inputMode="numeric" maxLength={6} placeholder="123456" {...form.register("code")} />
+            {form.formState.errors.code && (
+              <p className="mt-1 text-xs text-destructive">{form.formState.errors.code.message}</p>
+            )}
+          </div>
+          <div>
             <Label className="mb-1.5 block text-sm">New password</Label>
-            <Input type="password" autoComplete="new-password" {...form.register("password")} disabled={!ready} />
+            <Input type="password" autoComplete="new-password" {...form.register("password")} />
             {form.formState.errors.password && (
               <p className="mt-1 text-xs text-destructive">{form.formState.errors.password.message}</p>
             )}
           </div>
           <div>
             <Label className="mb-1.5 block text-sm">Confirm password</Label>
-            <Input type="password" autoComplete="new-password" {...form.register("confirm")} disabled={!ready} />
+            <Input type="password" autoComplete="new-password" {...form.register("confirm")} />
             {form.formState.errors.confirm && (
               <p className="mt-1 text-xs text-destructive">{form.formState.errors.confirm.message}</p>
             )}
@@ -94,7 +89,7 @@ function ResetPasswordPage() {
           <Button
             type="submit"
             size="lg"
-            disabled={!ready || form.formState.isSubmitting}
+            disabled={form.formState.isSubmitting}
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
           >
             {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

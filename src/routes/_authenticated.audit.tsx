@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
-import { supabase } from "@/integrations/supabase/client";
+import { auditApi } from "@/lib/api-client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentStaff } from "@/lib/hooks/use-auth";
 import { Badge } from "@/components/ui/badge";
@@ -27,15 +27,7 @@ function AuditPage() {
 
   const q = useQuery({
     queryKey: ["audit-log"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("audit_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(300);
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => auditApi.list(),
   });
 
   return (
@@ -68,12 +60,12 @@ function AuditPage() {
                         {a.action}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3">{a.actor_label ?? <span className="text-muted-foreground">system</span>}</td>
+                    <td className="px-4 py-3">{a.actorLabel ?? <span className="text-muted-foreground">system</span>}</td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {a.entity ?? "—"}{a.entity_id ? ` · ${a.entity_id.slice(0, 8)}` : ""}
+                      {a.entity ?? "—"}{a.entityId ? ` · ${a.entityId.slice(0, 8)}` : ""}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {formatDistanceToNow(new Date(a.created_at), { addSuffix: true })}
+                      {formatDistanceToNow(new Date(a.createdAt), { addSuffix: true })}
                     </td>
                   </tr>
                 ))

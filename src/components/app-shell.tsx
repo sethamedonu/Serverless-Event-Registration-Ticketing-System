@@ -2,37 +2,34 @@ import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { motion } from "framer-motion";
 import {
-  LayoutDashboard,
-  Users,
-  UserPlus,
-  QrCode,
-  FileBarChart,
-  Settings as SettingsIcon,
-  ShieldCheck,
-  LogOut,
-  ScrollText,
-  Menu,
+  LayoutDashboard, Users, UserPlus, QrCode, FileBarChart,
+  Settings as SettingsIcon, ShieldCheck, LogOut, ScrollText, Menu, CalendarDays,
 } from "lucide-react";
 import { Logo, useEventSettings } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { useCurrentStaff } from "@/lib/hooks/use-auth";
-import { supabase } from "@/integrations/supabase/client";
-import { logAudit } from "@/lib/audit";
+import { signOut } from "@/lib/auth/cognito-client";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-type NavItem = { to: string; label: string; icon: typeof Users; roles?: ("admin" | "registration_officer" | "checkin_officer")[] };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof Users;
+  roles?: ("Admin" | "RegistrationOfficer" | "CheckinOfficer")[];
+};
 
 const NAV: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/participants", label: "Participants", icon: Users },
-  { to: "/walk-in", label: "Walk-in", icon: UserPlus, roles: ["admin", "registration_officer"] },
+  { to: "/walk-in", label: "Walk-in", icon: UserPlus, roles: ["Admin", "RegistrationOfficer"] },
   { to: "/check-in", label: "Check-in", icon: QrCode },
-  { to: "/reports", label: "Reports", icon: FileBarChart, roles: ["admin"] },
-  { to: "/staff", label: "Staff", icon: ShieldCheck, roles: ["admin"] },
-  { to: "/audit", label: "Audit log", icon: ScrollText, roles: ["admin"] },
-  { to: "/settings", label: "Settings", icon: SettingsIcon, roles: ["admin"] },
+  { to: "/events", label: "Events", icon: CalendarDays, roles: ["Admin"] },
+  { to: "/reports", label: "Reports", icon: FileBarChart, roles: ["Admin"] },
+  { to: "/staff", label: "Staff", icon: ShieldCheck, roles: ["Admin"] },
+  { to: "/audit", label: "Audit log", icon: ScrollText, roles: ["Admin"] },
+  { to: "/settings", label: "Settings", icon: SettingsIcon, roles: ["Admin"] },
 ];
 
 export function AppShell() {
@@ -42,18 +39,16 @@ export function AppShell() {
   const navigate = useNavigate();
 
   const items = useMemo(
-    () => NAV.filter((n) => !n.roles || n.roles.some((r) => staff.roles.includes(r))),
-    [staff.roles],
+    () => NAV.filter((n) => !n.roles || n.roles.some((r) => staff.groups.includes(r))),
+    [staff.groups],
   );
 
-  const signOut = async () => {
-    await logAudit("user.logout");
-    await supabase.auth.signOut();
+  const handleSignOut = () => {
+    signOut();
     toast.success("Signed out");
     navigate({ to: "/auth" });
   };
 
-  const displayName = staff.user?.user_metadata?.display_name ?? staff.user?.email ?? "";
   const roleLabel = staff.isAdmin
     ? "Administrator"
     : staff.isRegOfficer
@@ -91,18 +86,18 @@ export function AppShell() {
       <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
         <Logo className="h-10 w-10 rounded-full bg-white/90 p-0.5" />
         <div className="leading-tight min-w-0">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-sidebar-primary">National Banking COllege</div>
-          <div className="truncate text-sm font-semibold">{settings?.event_name ?? "Summit Console"}</div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-sidebar-primary">Event Console</div>
+          <div className="truncate text-sm font-semibold">{settings?.name ?? "Summit Console"}</div>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">{Nav}</div>
       <div className="border-t border-sidebar-border p-3">
         <div className="mb-2 rounded-lg bg-sidebar-accent/60 px-3 py-2 text-xs">
-          <div className="truncate font-semibold text-sidebar-foreground">{displayName}</div>
+          <div className="truncate font-semibold text-sidebar-foreground">{staff.displayName}</div>
           <div className="text-sidebar-foreground/70">{roleLabel}</div>
         </div>
         <Button
-          onClick={signOut}
+          onClick={handleSignOut}
           variant="ghost"
           className="w-full justify-start text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
@@ -131,12 +126,9 @@ export function AppShell() {
               </Sheet>
               <div className="hidden md:block">
                 <div className="text-xs text-muted-foreground">
-                  {settings?.event_date
-                    ? new Date(settings.event_date).toLocaleDateString(undefined, {
-                        weekday: "long",
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
+                  {settings?.date
+                    ? new Date(settings.date).toLocaleDateString(undefined, {
+                        weekday: "long", year: "numeric", month: "long", day: "numeric",
                       })
                     : "Live console"}
                 </div>

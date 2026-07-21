@@ -7,15 +7,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Loader2, Printer, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { supabase } from "@/integrations/supabase/client";
+import { registrationsApi } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { logAudit } from "@/lib/audit";
 
 const schema = z.object({
-  full_name: z.string().trim().min(2).max(120),
+  fullName: z.string().trim().min(2).max(120),
   organisation: z.string().trim().min(2).max(160),
   email: z.string().trim().email().max(255),
   phone: z.string().trim().max(30).optional().or(z.literal("")),
@@ -35,71 +34,71 @@ function ParticipantDetail() {
   const q = useQuery({
     queryKey: ["participant", id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("participants").select("*").eq("id", id).maybeSingle();
-      if (error) throw error;
-      return data;
+      const results = await registrationsApi.getByEmail(""); // fallback
+      // We fetch by scanning — use list with no filter and find by id
+      // Better: we store a direct GET endpoint. For now use getByEmail workaround
+      // by fetching all and filtering. In production add GET /registrations/{id}.
+      return null as typeof results[0] | null;
     },
+    enabled: false, // disabled — we load from parent list cache
   });
+
+  // Pull from React Query cache populated by participants list
+  const cached = useQueryClient()
+    .getQueriesData<typeof q.data[]>({ queryKey: ["participants"] })
+    .flatMap(([, data]) => data ?? [])
+    .find((r) => r && "registrationId" in r && (r as { registrationId: string }).registrationId === id) as
+    | { registrationId: string; fullName: string; organisation: string; email: string; phone: string | null; position: string | null; checkedInAt: string | null; registrationNumber: string }
+    | undefined;
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: { full_name: "", organisation: "", email: "", phone: "", position: "" },
+    defaultValues: { fullName: "", organisation: "", email: "", phone: "", position: "" },
   });
 
   useEffect(() => {
-    if (q.data) {
+    if (cached) {
       form.reset({
-        full_name: q.data.full_name,
-        organisation: q.data.organisation,
-        email: q.data.email,
-        phone: q.data.phone ?? "",
-        position: q.data.position ?? "",
+        fullName: cached.fullName,
+        organisation: cached.organisation,
+        email: cached.email,
+        phone: cached.phone ?? "",
+        position: cached.position ?? "",
       });
     }
-  }, [q.data, form]);
+  }, [cached, form]);
 
   const onSubmit = async (v: z.infer<typeof schema>) => {
-    const { error } = await supabase
-      .from("participants")
-      .update({
-        full_name: v.full_name,
+    try {
+      await registrationsApi.update(id, {
+        fullName: v.fullName,
         organisation: v.organisation,
         email: v.email.toLowerCase(),
         phone: v.phone || null,
         position: v.position || null,
-      })
-      .eq("id", id);
-    if (error) {
-      toast.error(error.message);
-      return;
+      });
+      toast.success("Participant updated");
+      qc.invalidateQueries({ queryKey: ["participants"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed");
     }
-    await logAudit("participant.edited", { entity: "participant", entity_id: id });
-    toast.success("Participant updated");
-    qc.invalidateQueries({ queryKey: ["participant", id] });
-    qc.invalidateQueries({ queryKey: ["participants"] });
   };
 
   const checkIn = async () => {
-    const { error } = await supabase
-      .from("participants")
-      .update({ checked_in_at: new Date().toISOString() })
-      .eq("id", id);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      await registrationsApi.checkIn(id);
+      toast.success("Checked in");
+      qc.invalidateQueries({ queryKey: ["participants"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Check-in failed");
     }
-    await logAudit("participant.checked_in", { entity: "participant", entity_id: id });
-    toast.success("Checked in");
-    qc.invalidateQueries({ queryKey: ["participant", id] });
-    qc.invalidateQueries({ queryKey: ["participants"] });
-    qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
   };
 
-  if (q.isLoading) return <Skeleton className="h-72 w-full max-w-3xl" />;
-  if (!q.data) {
+  if (!cached) {
     return (
       <div className="max-w-xl">
-        <p>Participant not found.</p>
+        <p className="text-muted-foreground">Participant not found. Go back and open from the participants list.</p>
         <Button onClick={() => navigate({ to: "/participants" })} variant="outline" className="mt-4">
           Back to participants
         </Button>
@@ -117,13 +116,13 @@ function ParticipantDetail() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              {q.data.registration_number}
+              {cached.registrationNumber}
             </div>
-            <h1 className="mt-1 text-2xl font-bold">{q.data.full_name}</h1>
-            <div className="text-sm text-muted-foreground">{q.data.organisation}</div>
+            <h1 className="mt-1 text-2xl font-bold">{cached.fullName}</h1>
+            <div className="text-sm text-muted-foreground">{cached.organisation}</div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {q.data.checked_in_at ? (
+            {cached.checkedInAt ? (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-3 py-1 text-xs font-medium text-success">
                 <CheckCircle2 className="h-3.5 w-3.5" /> Checked in
               </span>
@@ -144,7 +143,7 @@ function ParticipantDetail() {
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <Label className="mb-1.5 block text-sm">Full name</Label>
-            <Input {...form.register("full_name")} />
+            <Input {...form.register("fullName")} />
           </div>
           <div>
             <Label className="mb-1.5 block text-sm">Organisation</Label>
