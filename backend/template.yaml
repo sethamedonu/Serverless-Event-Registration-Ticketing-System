@@ -20,69 +20,30 @@ Parameters:
     Default: prod
     AllowedValues: [dev, prod]
 
+  # Pre-existing Cognito User Pool — not managed by this stack
+  ExistingUserPoolId:
+    Type: String
+    Default: eu-north-1_OQUxU1zIQ
+    Description: Cognito User Pool ID (pre-created, not managed by SAM)
+
+  ExistingUserPoolArn:
+    Type: String
+    Default: arn:aws:cognito-idp:eu-north-1:814330181503:userpool/eu-north-1_OQUxU1zIQ
+    Description: Cognito User Pool ARN (pre-created, not managed by SAM)
+
+  ExistingUserPoolClientId:
+    Type: String
+    Default: p9rpuur8d24cg47ncjq5k2f5s
+    Description: Cognito App Client ID (pre-created, not managed by SAM)
+
 Resources:
 
   # ── Cognito ──────────────────────────────────────────────────────────────────
-
-  UserPool:
-    Type: AWS::Cognito::UserPool
-    Properties:
-      UserPoolName: !Sub event-with-me-${Stage}
-      UsernameAttributes: [email]
-      AutoVerifiedAttributes: [email]
-      Policies:
-        PasswordPolicy:
-          MinimumLength: 8
-          RequireUppercase: true
-          RequireLowercase: true
-          RequireNumbers: true
-          RequireSymbols: false
-      Schema:
-        - Name: name
-          AttributeDataType: String
-          Mutable: true
-          Required: false
-      AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: false
-
-  UserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      ClientName: !Sub event-with-me-client-${Stage}
-      UserPoolId: !Ref UserPool
-      GenerateSecret: false
-      ExplicitAuthFlows:
-        - ALLOW_USER_PASSWORD_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
-        - ALLOW_USER_SRP_AUTH
-      AccessTokenValidity: 1
-      IdTokenValidity: 1
-      RefreshTokenValidity: 30
-      TokenValidityUnits:
-        AccessToken: days
-        IdToken: days
-        RefreshToken: days
-
-  AdminGroup:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties:
-      GroupName: Admin
-      UserPoolId: !Ref UserPool
-      Description: Full administrative access
-
-  RegistrationOfficerGroup:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties:
-      GroupName: RegistrationOfficer
-      UserPoolId: !Ref UserPool
-      Description: Can register walk-ins and view participants
-
-  CheckinOfficerGroup:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties:
-      GroupName: CheckinOfficer
-      UserPoolId: !Ref UserPool
-      Description: Can check in participants
+  # User Pool, App Client, and Groups are pre-existing and not managed by this
+  # stack. The API Gateway Cognito Authorizer references them via parameters.
+  # Pool:    eu-north-1_OQUxU1zIQ  (User pool - daumn9)
+  # Client:  p9rpuur8d24cg47ncjq5k2f5s  (EventRegistrationUserPool)
+  # Groups:  Admin | RegistrationOfficer | CheckinOfficer
 
   # ── DynamoDB ─────────────────────────────────────────────────────────────────
 
@@ -168,7 +129,7 @@ Resources:
         AddDefaultAuthorizerToCorsPreflight: false
         Authorizers:
           CognitoAuthorizer:
-            UserPoolArn: !GetAtt UserPool.Arn
+            UserPoolArn: !Ref ExistingUserPoolArn
 
   # ── Lambda — Events ──────────────────────────────────────────────────────────
 
@@ -429,14 +390,20 @@ Outputs:
       Name: !Sub event-with-me-api-url-${Stage}
 
   UserPoolId:
-    Description: Cognito User Pool ID
-    Value: !Ref UserPool
+    Description: Cognito User Pool ID (pre-existing)
+    Value: !Ref ExistingUserPoolId
     Export:
       Name: !Sub event-with-me-user-pool-id-${Stage}
 
+  UserPoolArn:
+    Description: Cognito User Pool ARN (pre-existing)
+    Value: !Ref ExistingUserPoolArn
+    Export:
+      Name: !Sub event-with-me-user-pool-arn-${Stage}
+
   UserPoolClientId:
-    Description: Cognito User Pool Client ID
-    Value: !Ref UserPoolClient
+    Description: Cognito App Client ID (pre-existing)
+    Value: !Ref ExistingUserPoolClientId
     Export:
       Name: !Sub event-with-me-client-id-${Stage}
 
