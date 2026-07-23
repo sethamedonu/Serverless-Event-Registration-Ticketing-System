@@ -1,8 +1,8 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { db, EVENTS_TABLE } from "../shared/db.mjs";
-import { ok, badRequest, serverError, cors } from "../shared/response.mjs";
+import { created, badRequest, serverError, forbidden, cors } from "../shared/response.mjs";
 import { newId } from "../shared/ids.mjs";
-import { audit, callerFromEvent, isAdmin, forbidden } from "../shared/auth.mjs";
+import { audit, callerFromEvent, isAdmin } from "../shared/auth.mjs";
 
 export async function handler(event) {
   if (event.httpMethod === "OPTIONS") return cors();
@@ -21,7 +21,6 @@ export async function handler(event) {
   if (!name || typeof name !== "string" || name.trim().length < 2) {
     return badRequest("name is required (min 2 chars)");
   }
-
   const item = {
     eventId: newId(),
     name: name.trim(),
@@ -48,7 +47,7 @@ export async function handler(event) {
       actorLabel: caller.actorLabel,
       meta: { name: item.name },
     });
-    return ok(item);
+    return created(item);
   } catch (e) {
     console.error(e);
     return serverError();

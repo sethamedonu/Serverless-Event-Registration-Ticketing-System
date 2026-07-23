@@ -2,6 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: Event Registration & Ticketing System — Serverless API
 
+# ── Globals ───────────────────────────────────────────────────────────────────
+
 Globals:
   Function:
     Runtime: nodejs20.x
@@ -14,36 +16,81 @@ Globals:
         AUDIT_TABLE: !Ref AuditTable
         SNS_TOPIC_ARN: !Ref ConfirmationTopic
 
+# ── Parameters ────────────────────────────────────────────────────────────────
+
 Parameters:
   Stage:
     Type: String
     Default: prod
     AllowedValues: [dev, prod]
 
-  # Pre-existing Cognito User Pool — not managed by this stack
-  ExistingUserPoolId:
-    Type: String
-    Default: eu-north-1_OQUxU1zIQ
-    Description: Cognito User Pool ID (pre-created, not managed by SAM)
-
-  ExistingUserPoolArn:
-    Type: String
-    Default: arn:aws:cognito-idp:eu-north-1:814330181503:userpool/eu-north-1_OQUxU1zIQ
-    Description: Cognito User Pool ARN (pre-created, not managed by SAM)
-
-  ExistingUserPoolClientId:
-    Type: String
-    Default: p9rpuur8d24cg47ncjq5k2f5s
-    Description: Cognito App Client ID (pre-created, not managed by SAM)
+# ── Resources ─────────────────────────────────────────────────────────────────
 
 Resources:
 
-  # ── Cognito ──────────────────────────────────────────────────────────────────
-  # User Pool, App Client, and Groups are pre-existing and not managed by this
-  # stack. The API Gateway Cognito Authorizer references them via parameters.
-  # Pool:    eu-north-1_OQUxU1zIQ  (User pool - daumn9)
-  # Client:  p9rpuur8d24cg47ncjq5k2f5s  (EventRegistrationUserPool)
-  # Groups:  Admin | RegistrationOfficer | CheckinOfficer
+  # ── Cognito User Pool ────────────────────────────────────────────────────────
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub event-with-me-${Stage}
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: name
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - Name: email
+          AttributeDataType: String
+          Mutable: false
+          Required: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub event-with-me-client-${Stage}
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Admin
+      UserPoolId: !Ref UserPool
+      Description: Full system access
+
+  RegistrationOfficerGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: RegistrationOfficer
+      UserPoolId: !Ref UserPool
+      Description: Walk-in registration and participants
+
+  CheckinOfficerGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: CheckinOfficer
+      UserPoolId: !Ref UserPool
+      Description: Check-in only
 
   # ── DynamoDB ─────────────────────────────────────────────────────────────────
 
@@ -100,10 +147,10 @@ Resources:
       TableName: !Sub audit-logs-${Stage}
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: id
+        - AttributeName: auditId
           AttributeType: S
       KeySchema:
-        - AttributeName: id
+        - AttributeName: auditId
           KeyType: HASH
 
   # ── SNS ──────────────────────────────────────────────────────────────────────
@@ -121,7 +168,7 @@ Resources:
       Name: !Sub event-with-me-api-${Stage}
       StageName: !Ref Stage
       Cors:
-        AllowMethods: "'GET,POST,DELETE,OPTIONS'"
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization'"
         AllowOrigin: "'*'"
       Auth:
@@ -129,7 +176,7 @@ Resources:
         AddDefaultAuthorizerToCorsPreflight: false
         Authorizers:
           CognitoAuthorizer:
-            UserPoolArn: !Ref ExistingUserPoolArn
+            UserPoolArn: !GetAtt UserPool.Arn
 
   # ── Lambda — Events ──────────────────────────────────────────────────────────
 
@@ -139,7 +186,9 @@ Resources:
       FunctionName: !Sub createEvent-${Stage}
       CodeUri: events/
       Handler: createEvent.handler
-      Policies: [DynamoDBCrudPolicy: {TableName: !Ref EventsTable}, DynamoDBCrudPolicy: {TableName: !Ref AuditTable}]
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref EventsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
       Events:
         Api:
           Type: Api
@@ -154,7 +203,8 @@ Resources:
       FunctionName: !Sub listEvents-${Stage}
       CodeUri: events/
       Handler: listEvents.handler
-      Policies: [DynamoDBReadPolicy: {TableName: !Ref EventsTable}]
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref EventsTable }
       Events:
         Api:
           Type: Api
@@ -165,13 +215,33 @@ Resources:
             Auth:
               Authorizer: NONE
 
+  GetEventFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub getEvent-${Stage}
+      CodeUri: events/
+      Handler: getEvent.handler
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref EventsTable }
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /events/{eventId}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
   UpdateEventFn:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub updateEvent-${Stage}
       CodeUri: events/
       Handler: updateEvent.handler
-      Policies: [DynamoDBCrudPolicy: {TableName: !Ref EventsTable}, DynamoDBCrudPolicy: {TableName: !Ref AuditTable}]
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref EventsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
       Events:
         Api:
           Type: Api
@@ -179,6 +249,23 @@ Resources:
             RestApiId: !Ref Api
             Path: /events/{eventId}
             Method: PUT
+
+  DeleteEventFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub deleteEvent-${Stage}
+      CodeUri: events/
+      Handler: deleteEvent.handler
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref EventsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /events/{eventId}
+            Method: DELETE
 
   # ── Lambda — Registrations ───────────────────────────────────────────────────
 
@@ -189,10 +276,10 @@ Resources:
       CodeUri: registrations/
       Handler: registerParticipant.handler
       Policies:
-        - DynamoDBCrudPolicy: {TableName: !Ref RegistrationsTable}
-        - DynamoDBReadPolicy: {TableName: !Ref EventsTable}
-        - DynamoDBCrudPolicy: {TableName: !Ref AuditTable}
-        - SNSPublishMessagePolicy: {TopicName: !GetAtt ConfirmationTopic.TopicName}
+        - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref EventsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
+        - SNSPublishMessagePolicy: { TopicName: !GetAtt ConfirmationTopic.TopicName }
       Events:
         Api:
           Type: Api
@@ -209,7 +296,8 @@ Resources:
       FunctionName: !Sub listRegistrations-${Stage}
       CodeUri: registrations/
       Handler: listRegistrations.handler
-      Policies: [DynamoDBReadPolicy: {TableName: !Ref RegistrationsTable}]
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref RegistrationsTable }
       Events:
         Api:
           Type: Api
@@ -218,13 +306,32 @@ Resources:
             Path: /events/{eventId}/registrations
             Method: GET
 
+  WalkInRegistrationFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub walkInRegistration-${Stage}
+      CodeUri: registrations/
+      Handler: walkInRegistration.handler
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref EventsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /events/{eventId}/walk-in
+            Method: POST
+
   GetRegistrationsByEmailFn:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub getRegistrations-${Stage}
       CodeUri: registrations/
       Handler: getRegistrations.handler
-      Policies: [DynamoDBReadPolicy: {TableName: !Ref RegistrationsTable}]
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref RegistrationsTable }
       Events:
         Api:
           Type: Api
@@ -233,13 +340,32 @@ Resources:
             Path: /registrations/{email}
             Method: GET
 
+  UpdateRegistrationFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub updateRegistration-${Stage}
+      CodeUri: registrations/
+      Handler: updateRegistration.handler
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /registrations/{id}
+            Method: PUT
+
   DeleteRegistrationFn:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub deleteRegistration-${Stage}
       CodeUri: registrations/
       Handler: deleteRegistration.handler
-      Policies: [DynamoDBCrudPolicy: {TableName: !Ref RegistrationsTable}, DynamoDBCrudPolicy: {TableName: !Ref AuditTable}]
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
       Events:
         Api:
           Type: Api
@@ -254,7 +380,9 @@ Resources:
       FunctionName: !Sub checkIn-${Stage}
       CodeUri: registrations/
       Handler: checkIn.handler
-      Policies: [DynamoDBCrudPolicy: {TableName: !Ref RegistrationsTable}, DynamoDBCrudPolicy: {TableName: !Ref AuditTable}]
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
       Events:
         Api:
           Type: Api
@@ -263,46 +391,15 @@ Resources:
             Path: /registrations/{id}/checkin
             Method: POST
 
-  WalkInRegistrationFn:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub walkInRegistration-${Stage}
-      CodeUri: registrations/
-      Handler: walkInRegistration.handler
-      Policies:
-        - DynamoDBCrudPolicy: {TableName: !Ref RegistrationsTable}
-        - DynamoDBReadPolicy: {TableName: !Ref EventsTable}
-        - DynamoDBCrudPolicy: {TableName: !Ref AuditTable}
-      Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /events/{eventId}/walk-in
-            Method: POST
-
-  UpdateRegistrationFn:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub updateRegistration-${Stage}
-      CodeUri: registrations/
-      Handler: updateRegistration.handler
-      Policies: [DynamoDBCrudPolicy: {TableName: !Ref RegistrationsTable}, DynamoDBCrudPolicy: {TableName: !Ref AuditTable}]
-      Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /registrations/{id}
-            Method: PUT
-
   PrintBadgeFn:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub printBadge-${Stage}
       CodeUri: registrations/
       Handler: printBadge.handler
-      Policies: [DynamoDBCrudPolicy: {TableName: !Ref RegistrationsTable}, DynamoDBCrudPolicy: {TableName: !Ref AuditTable}]
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
       Events:
         Api:
           Type: Api
@@ -317,7 +414,8 @@ Resources:
       FunctionName: !Sub getAuditLog-${Stage}
       CodeUri: registrations/
       Handler: getAuditLog.handler
-      Policies: [DynamoDBReadPolicy: {TableName: !Ref AuditTable}]
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref AuditTable }
       Events:
         Api:
           Type: Api
@@ -331,8 +429,7 @@ Resources:
   ApiErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub event-api-error-rate-${Stage}
-      AlarmDescription: API 5xx error rate exceeded 5%
+      AlarmName: !Sub event-api-5xx-${Stage}
       Namespace: AWS/ApiGateway
       MetricName: 5XXError
       Dimensions:
@@ -349,7 +446,6 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub event-lambda-errors-${Stage}
-      AlarmDescription: Lambda error count exceeded threshold
       Namespace: AWS/Lambda
       MetricName: Errors
       Statistic: Sum
@@ -390,22 +486,22 @@ Outputs:
       Name: !Sub event-with-me-api-url-${Stage}
 
   UserPoolId:
-    Description: Cognito User Pool ID (pre-existing)
-    Value: !Ref ExistingUserPoolId
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
     Export:
       Name: !Sub event-with-me-user-pool-id-${Stage}
 
-  UserPoolArn:
-    Description: Cognito User Pool ARN (pre-existing)
-    Value: !Ref ExistingUserPoolArn
-    Export:
-      Name: !Sub event-with-me-user-pool-arn-${Stage}
-
   UserPoolClientId:
-    Description: Cognito App Client ID (pre-existing)
-    Value: !Ref ExistingUserPoolClientId
+    Description: Cognito App Client ID
+    Value: !Ref UserPoolClient
     Export:
       Name: !Sub event-with-me-client-id-${Stage}
+
+  UserPoolArn:
+    Description: Cognito User Pool ARN
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub event-with-me-user-pool-arn-${Stage}
 
   AwsRegion:
     Description: Deployed AWS region

@@ -1,11 +1,8 @@
-import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
-import { db, REGISTRATIONS_TABLE } from "../shared/db.mjs";
+import { PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { db, REGISTRATIONS_TABLE, EVENTS_TABLE } from "../shared/db.mjs";
 import { ok, badRequest, conflict, serverError, cors } from "../shared/response.mjs";
 import { newId, registrationNumber } from "../shared/ids.mjs";
 import { audit, callerFromEvent } from "../shared/auth.mjs";
-import { GetCommand as GetEventCommand } from "@aws-sdk/lib-dynamodb";
-import { EVENTS_TABLE } from "../shared/db.mjs";
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 export async function handler(event) {
   if (event.httpMethod === "OPTIONS") return cors();
@@ -26,7 +23,7 @@ export async function handler(event) {
   if (!organisation || organisation.trim().length < 2) return badRequest("organisation is required");
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return badRequest("Valid email is required");
 
-  const eventResult = await db.send(new GetEventCommand({ TableName: EVENTS_TABLE, Key: { eventId } }));
+  const eventResult = await db.send(new GetCommand({ TableName: EVENTS_TABLE, Key: { eventId } }));
   if (!eventResult.Item) return badRequest("Event not found");
 
   // Duplicate check

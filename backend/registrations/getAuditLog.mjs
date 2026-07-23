@@ -10,7 +10,36 @@ export async function handler(event) {
   if (!isAdmin(caller.groups)) return forbidden();
 
   try {
-    const result = await db.send(new ScanCommand({ TableName: AUDIT_TABLE, Limit: 300 }));
+    const { entity, entityId, actorId } = event.queryStringParameters ?? {};
+
+    const filterParts = [];
+    const exprNames = {};
+    const exprValues = {};
+
+    if (entity) {
+      filterParts.push("#entity = :entity");
+      exprNames["#entity"] = "entity";
+      exprValues[":entity"] = entity;
+    }
+    if (entityId) {
+      filterParts.push("#entityId = :entityId");
+      exprNames["#entityId"] = "entityId";
+      exprValues[":entityId"] = entityId;
+    }
+    if (actorId) {
+      filterParts.push("#actorId = :actorId");
+      exprNames["#actorId"] = "actorId";
+      exprValues[":actorId"] = actorId;
+    }
+
+    const params = { TableName: AUDIT_TABLE };
+    if (filterParts.length > 0) {
+      params.FilterExpression = filterParts.join(" AND ");
+      params.ExpressionAttributeNames = exprNames;
+      params.ExpressionAttributeValues = exprValues;
+    }
+
+    const result = await db.send(new ScanCommand(params));
     const items = (result.Items ?? []).sort(
       (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
     );

@@ -8,7 +8,7 @@ export async function audit(action, opts = {}) {
     new PutCommand({
       TableName: AUDIT_TABLE,
       Item: {
-        id: newId(),
+        auditId: newId(),
         action,
         entity: opts.entity ?? null,
         entityId: opts.entityId ?? null,
@@ -24,13 +24,16 @@ export async function audit(action, opts = {}) {
 // Extract caller identity from Cognito authorizer context
 export function callerFromEvent(event) {
   const claims = event.requestContext?.authorizer?.claims ?? {};
+
   return {
     actorId: claims.sub ?? null,
     actorLabel: claims.name ?? claims.email ?? null,
-    groups: (claims["cognito:groups"] ?? "").split(",").filter(Boolean),
+    groups: (claims["cognito:groups"] ?? "")
+      .split(",")
+      .filter(Boolean),
   };
 }
 
-export function isAdmin(groups) {
+export function isAdmin(groups = []) {
   return groups.includes("Admin");
 }
