@@ -337,7 +337,7 @@ Resources:
           Type: Api
           Properties:
             RestApiId: !Ref Api
-            Path: /registrations/{email}
+            Path: /registrations/by-email/{email}
             Method: GET
 
   UpdateRegistrationFn:

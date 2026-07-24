@@ -80,7 +80,7 @@ export const registrationsApi = {
   },
 
   getByEmail: (email: string) =>
-    request<ApiRegistration[]>("GET", `/registrations/${encodeURIComponent(email)}`),
+    request<ApiRegistration[]>("GET", `/registrations/by-email/${encodeURIComponent(email)}`),
 
   update: (id: string, body: Partial<ApiRegistration>) =>
     request<ApiRegistration>("PUT", `/registrations/${id}`, body),
@@ -99,7 +99,7 @@ export const registrationsApi = {
 // ── Audit ─────────────────────────────────────────────────────────────────────
 
 export interface ApiAuditLog {
-  id: string;
+  auditId: string;
   action: string;
   entity: string | null;
   entityId: string | null;
