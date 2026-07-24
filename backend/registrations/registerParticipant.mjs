@@ -1,12 +1,11 @@
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
-import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
+import { PutCommand, QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { db, EVENTS_TABLE, REGISTRATIONS_TABLE } from "./shared/db.mjs";
 import { ok, badRequest, notFound, conflict, serverError, cors } from "./shared/response.mjs";
 import { newId, registrationNumber } from "./shared/ids.mjs";
 import { audit } from "./shared/auth.mjs";
 
-const sns = new SNSClient({});
+const sqs = new SQSClient({});
 
 function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -76,14 +75,13 @@ export async function handler(event) {
       meta: { name: item.fullName, reg: item.registrationNumber, eventId },
     });
 
-    // SNS confirmation email (optional — only fires if SNS_TOPIC_ARN is set)
-    if (process.env.SNS_TOPIC_ARN) {
-      await sns.send(new PublishCommand({
-        TopicArn: process.env.SNS_TOPIC_ARN,
-        Subject: `Registration confirmed — ${eventResult.Item.name}`,
-        Message: JSON.stringify({
-          type: "registration_confirmation",
-          to: item.email,
+    // Enqueue post-registration processing (email, audit) via SQS
+    if (process.env.REGISTRATION_QUEUE_URL) {
+      await sqs.send(new SendMessageCommand({
+        QueueUrl: process.env.REGISTRATION_QUEUE_URL,
+        MessageBody: JSON.stringify({
+          registrationId: item.registrationId,
+          email: item.email,
           fullName: item.fullName,
           registrationNumber: item.registrationNumber,
           eventName: eventResult.Item.name,

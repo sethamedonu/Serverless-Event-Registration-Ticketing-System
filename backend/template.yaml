@@ -15,6 +15,8 @@ Globals:
         REGISTRATIONS_TABLE: !Ref RegistrationsTable
         AUDIT_TABLE: !Ref AuditTable
         SNS_TOPIC_ARN: !Ref ConfirmationTopic
+        REGISTRATION_QUEUE_URL: !Ref RegistrationQueue
+        SES_SOURCE_EMAIL: !Ref SesSourceEmail
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 
@@ -23,6 +25,10 @@ Parameters:
     Type: String
     Default: prod
     AllowedValues: [dev, prod]
+  SesSourceEmail:
+    Type: String
+    Default: ""
+    Description: Verified SES sender email address (leave empty to skip sending)
 
 # ── Resources ─────────────────────────────────────────────────────────────────
 
@@ -153,6 +159,23 @@ Resources:
         - AttributeName: auditId
           KeyType: HASH
 
+  # ── SQS ──────────────────────────────────────────────────────────────────────
+
+  RegistrationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub registration-dlq-${Stage}
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  RegistrationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub registration-queue-${Stage}
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt RegistrationDLQ.Arn
+        maxReceiveCount: 3
+
   # ── SNS ──────────────────────────────────────────────────────────────────────
 
   ConfirmationTopic:
@@ -279,7 +302,7 @@ Resources:
         - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
         - DynamoDBReadPolicy: { TableName: !Ref EventsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
-        - SNSPublishMessagePolicy: { TopicName: !GetAtt ConfirmationTopic.TopicName }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt RegistrationQueue.QueueName }
       Events:
         Api:
           Type: Api
@@ -423,6 +446,27 @@ Resources:
             RestApiId: !Ref Api
             Path: /audit
             Method: GET
+
+  TicketProcessingFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ticketProcessing-${Stage}
+      CodeUri: registrations/
+      Handler: ticketProcessing.handler
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref RegistrationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AuditTable }
+        - SESBulkTemplatedCrudPolicy: { IdentityName: !Ref SesSourceEmail }
+        - SQSPollerPolicy: { QueueName: !GetAtt RegistrationQueue.QueueName }
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt RegistrationQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
 
   # ── CloudWatch Alarms ────────────────────────────────────────────────────────
 
