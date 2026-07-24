@@ -27,7 +27,7 @@ Parameters:
     AllowedValues: [dev, prod]
   SesSourceEmail:
     Type: String
-    Default: ""
+    Default: "noreply@azubisuccess.space"
     Description: Verified SES sender email address (leave empty to skip sending)
 
 # ── Resources ─────────────────────────────────────────────────────────────────
