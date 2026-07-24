@@ -1,4 +1,3 @@
-# CI/CD Serverless Deployment Pipeline
 name: CI/CD Serverless Deployment Pipeline
 
 on:
