@@ -17,6 +17,7 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+.env
 
 # SAM build artifacts
 backend/.aws-sam/
