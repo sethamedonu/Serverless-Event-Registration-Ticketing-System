@@ -18,6 +18,9 @@ dist-ssr
 .nitro
 *.local
 
+# SAM build artifacts
+backend/.aws-sam/
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
