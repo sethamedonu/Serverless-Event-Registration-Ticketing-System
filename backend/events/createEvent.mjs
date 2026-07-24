@@ -1,8 +1,8 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
-import { db, EVENTS_TABLE } from "../shared/db.mjs";
-import { created, badRequest, serverError, forbidden, cors } from "../shared/response.mjs";
-import { newId } from "../shared/ids.mjs";
-import { audit, callerFromEvent, isAdmin } from "../shared/auth.mjs";
+import { db, EVENTS_TABLE } from "./shared/db.mjs";
+import { created, badRequest, serverError, forbidden, cors } from "./shared/response.mjs";
+import { newId } from "./shared/ids.mjs";
+import { audit, callerFromEvent, isAdmin } from "./shared/auth.mjs";
 
 export async function handler(event) {
   if (event.httpMethod === "OPTIONS") return cors();

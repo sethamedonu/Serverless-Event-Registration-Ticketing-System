@@ -1,6 +1,6 @@
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
-import { db, EVENTS_TABLE } from "../shared/db.mjs";
-import { ok, badRequest, notFound, serverError, cors } from "../shared/response.mjs";
+import { db, EVENTS_TABLE } from "./shared/db.mjs";
+import { ok, badRequest, notFound, serverError, cors } from "./shared/response.mjs";
 
 export async function handler(event) {
   if (event.httpMethod === "OPTIONS") return cors();

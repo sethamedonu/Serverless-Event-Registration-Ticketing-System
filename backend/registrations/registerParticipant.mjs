@@ -1,10 +1,10 @@
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
-import { db, EVENTS_TABLE, REGISTRATIONS_TABLE } from "../shared/db.mjs";
-import { ok, badRequest, notFound, conflict, serverError, cors } from "../shared/response.mjs";
-import { newId, registrationNumber } from "../shared/ids.mjs";
-import { audit } from "../shared/auth.mjs";
+import { db, EVENTS_TABLE, REGISTRATIONS_TABLE } from "./shared/db.mjs";
+import { ok, badRequest, notFound, conflict, serverError, cors } from "./shared/response.mjs";
+import { newId, registrationNumber } from "./shared/ids.mjs";
+import { audit } from "./shared/auth.mjs";
 
 const sns = new SNSClient({});
 

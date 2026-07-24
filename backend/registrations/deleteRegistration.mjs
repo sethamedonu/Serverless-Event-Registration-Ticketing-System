@@ -1,7 +1,7 @@
 import { GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
-import { db, REGISTRATIONS_TABLE } from "../shared/db.mjs";
-import { ok, badRequest, notFound, forbidden, serverError, cors } from "../shared/response.mjs";
-import { audit, callerFromEvent, isAdmin } from "../shared/auth.mjs";
+import { db, REGISTRATIONS_TABLE } from "./shared/db.mjs";
+import { ok, badRequest, notFound, forbidden, serverError, cors } from "./shared/response.mjs";
+import { audit, callerFromEvent, isAdmin } from "./shared/auth.mjs";
 
 export async function handler(event) {
   if (event.httpMethod === "OPTIONS") return cors();

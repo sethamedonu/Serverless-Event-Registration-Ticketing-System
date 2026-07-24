@@ -1,8 +1,8 @@
 import { PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { db, REGISTRATIONS_TABLE, EVENTS_TABLE } from "../shared/db.mjs";
-import { ok, badRequest, conflict, serverError, cors } from "../shared/response.mjs";
-import { newId, registrationNumber } from "../shared/ids.mjs";
-import { audit, callerFromEvent } from "../shared/auth.mjs";
+import { db, REGISTRATIONS_TABLE, EVENTS_TABLE } from "./shared/db.mjs";
+import { ok, badRequest, conflict, serverError, cors } from "./shared/response.mjs";
+import { newId, registrationNumber } from "./shared/ids.mjs";
+import { audit, callerFromEvent } from "./shared/auth.mjs";
 
 export async function handler(event) {
   if (event.httpMethod === "OPTIONS") return cors();
