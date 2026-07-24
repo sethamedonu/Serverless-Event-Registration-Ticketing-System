@@ -16,6 +16,6 @@ frontend:
     paths:
       - node_modules/**/*
 customRules:
-  - source: "</^[^.]+$|.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json)$)([^.]+$)/>"
+  - source: "/<*>"
     target: /index.html
-    status: "200"
+    status: "404-200"
