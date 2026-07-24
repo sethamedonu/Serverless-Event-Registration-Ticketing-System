@@ -164,13 +164,13 @@ Resources:
   RegistrationDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub registration-dlq-${Stage}
+      QueueName: !Sub success-event-queue-email-dlq-${Stage}
       MessageRetentionPeriod: 1209600  # 14 days
 
   RegistrationQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub registration-queue-${Stage}
+      QueueName: success-event-queue-email
       VisibilityTimeout: 60
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt RegistrationDLQ.Arn
